@@ -1,0 +1,32 @@
+# Pinned to the versions this repo's test suite (tests/) and all three
+# demo notebooks (examples/*.ipynb) are currently verified against.
+# Mirrors pyproject.toml's [project.dependencies] + the "sequence" and
+# "graph" extras (see pyproject.toml for the >= lower-bound version of
+# these same constraints), flattened into one file plus the notebook
+# tooling itself for convenience: `pip install -r requirements.txt` is
+# enough to open and run every notebook in examples/, no extras syntax
+# needed.
+#
+# xgboost, transformers, and py3Dmol are deliberately NOT listed here --
+# no notebook in examples/ imports them (see CLAUDE.md's "Environment
+# note").
+
+# Core (fingerprint/tree path -- examples/tree_demo.ipynb)
+rdkit==2025.9.2
+shap==0.49.1
+numpy==1.26.4
+scikit-learn==1.3.0
+
+# Sequence path (examples/sequence_demo.ipynb)
+torch==2.8.0
+
+# Graph path (examples/graph_demo.ipynb)
+torch_geometric==2.6.1
+captum==0.8.0
+
+# Running the notebooks themselves
+ipykernel==6.28.0
+jupyterlab==4.0.11
+
+# visxai itself
+-e .

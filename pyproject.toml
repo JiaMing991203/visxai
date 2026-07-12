@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "visxai"
+version = "0.1.0"
+description = "Explainable AI for drug discovery: maps model-interpretation algorithms (SHAP, Integrated Gradients, attention) back onto molecular structures."
+requires-python = ">=3.9"
+dependencies = [
+    "rdkit>=2023.9",
+    "shap>=0.44",
+    "numpy>=1.24",
+    "scikit-learn>=1.2",
+]
+
+[project.optional-dependencies]
+sequence = ["torch>=2.0"]
+graph = ["torch>=2.0", "torch_geometric>=2.6", "captum>=0.8"]
+dev = [
+    "nbformat>=5.9",
+    "nbclient>=0.8",
+    "ipykernel>=6.28",
+    "visxai[sequence]",
+    "visxai[graph]",
+]
+
+[tool.setuptools.packages.find]
+include = ["visxai*"]
