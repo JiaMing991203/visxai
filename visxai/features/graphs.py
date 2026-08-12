@@ -8,7 +8,7 @@ Design
 ------
 VisXAI wraps an already-trained model; it must not assume the node/edge
 feature scheme that model was trained with matches any particular encoding
-(see the architecture principle in ``CLAUDE.md``). Unlike
+(see the architecture principle in the README). Unlike
 :mod:`visxai.features.sequences`'s tokenizer (which has a reasonable
 reference default), there is no dominant real-world convention for GNN
 node/edge features analogous to Morgan/MACCS fingerprints for tree models —
@@ -135,7 +135,7 @@ def generate_graph_representation(
         Callable mapping an RDKit ``Atom`` to a 1-D feature vector. Required
         with no default — must match the target model's actual
         training-time node-feature scheme (see the architecture principle
-        in ``CLAUDE.md``); VisXAI cannot verify this and does not assume
+        in the README); VisXAI cannot verify this and does not assume
         one specific scheme is universally correct.
     bond_featurizer : BondFeaturizer, optional
         Callable mapping an RDKit ``Bond`` to a 1-D feature vector. If

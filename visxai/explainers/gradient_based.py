@@ -203,7 +203,7 @@ class IntegratedGradientsExplainer(BaseExplainer):
         itself, not an assumption about the model's training data. Provide
         an explicit baseline if the target model's feature scheme makes an
         all-zeros vector a meaningless "absence" (see the architecture
-        principle in ``CLAUDE.md`` on not assuming a specific feature
+        principle in the README on not assuming a specific feature
         scheme).
     edge_baseline : numpy.ndarray, optional
         The same idea as ``baseline``, but for edge features: a vector of
@@ -332,6 +332,10 @@ class IntegratedGradientsExplainer(BaseExplainer):
             metadata={
                 "n_steps": self._n_steps,
                 "predicted_value": float(model.predict(mol_rep)[0]),
+                # Node i is atom i, with no redistribution, so there is
+                # nothing to itemise: atom_provenance/bond_provenance stay
+                # empty and the descriptor alone carries the convention.
+                "attribution": "graph/direct",
             },
         )
 
@@ -662,5 +666,8 @@ class GradCAMExplainer(BaseExplainer):
             bond_scores=bond_scores,
             metadata={
                 "predicted_value": float(model.predict(mol_rep)[0]),
+                # See IntegratedGradientsExplainer: 1:1 node-to-atom mapping
+                # means there is no sharing to record.
+                "attribution": "graph/direct",
             },
         )

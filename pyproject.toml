@@ -1,12 +1,45 @@
 [build-system]
-requires = ["setuptools>=68.0"]
+# >=77 is required, not merely preferred: the PEP 639 `license = "MIT"`
+# SPDX-string form below (and `license-files`) is only understood from that
+# version on. An older setuptools either errors or silently drops the
+# license metadata from the built distribution.
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "visxai"
-version = "0.1.0"
+version = "0.2.0"
 description = "Explainable AI for drug discovery: maps model-interpretation algorithms (SHAP, Integrated Gradients, attention) back onto molecular structures."
+readme = "README.md"
 requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "JiaMing Yao", email = "yaojm@umich.edu" }]
+keywords = [
+    "explainable-ai",
+    "xai",
+    "cheminformatics",
+    "drug-discovery",
+    "molecular-property-prediction",
+    "rdkit",
+    "shap",
+    "interpretability",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Typing :: Typed",
+]
 dependencies = [
     "rdkit>=2023.9",
     "shap>=0.44",
@@ -14,16 +47,69 @@ dependencies = [
     "scikit-learn>=1.2",
 ]
 
+[project.urls]
+Homepage = "https://github.com/JiaMing991203/visxai"
+Repository = "https://github.com/JiaMing991203/visxai"
+Issues = "https://github.com/JiaMing991203/visxai/issues"
+
 [project.optional-dependencies]
-sequence = ["torch>=2.0"]
+sequence = ["torch>=2.0", "captum>=0.8", "transformers>=4.30"]
 graph = ["torch>=2.0", "torch_geometric>=2.6", "captum>=0.8"]
+# Interactive in-notebook visualization (visxai/visualizers/interactive.py).
+#
+# >=8.0, even though ExplanationDashboard's *Python* usage works fine on
+# ipywidgets 7 (verified -- the full dashboard suite passes against both
+# 7.6.5 and 8.1.8; it only uses controls whose API is stable across both:
+# Dropdown, FloatRangeSlider, RadioButtons, HTML, VBox/HBox, Layout,
+# observe(names="value")). The floor is about the BROWSER side: rendering
+# requires the frontend package to match the widget protocol version the
+# kernel emits, and those generations do not cross --
+#   ipywidgets 7.x -> @jupyter-widgets/controls 1.x -> jupyterlab_widgets 1.x -> JupyterLab 3
+#   ipywidgets 8.x -> @jupyter-widgets/controls 2.x -> jupyterlab_widgets 3.x -> JupyterLab 4 / Notebook 7
+# On JupyterLab 4 or Notebook 7 (the current generation) an ipywidgets 7
+# kernel renders nothing at all -- no error, just a blank output area, which
+# every headless test passes straight through. Anyone deliberately on
+# JupyterLab 3 can pin ipywidgets 7 themselves; the Python code supports it.
+viz = ["ipywidgets>=8.0", "anywidget>=0.9"]
 dev = [
+    "pytest>=7.4",
     "nbformat>=5.9",
     "nbclient>=0.8",
     "ipykernel>=6.28",
     "visxai[sequence]",
     "visxai[graph]",
+    "visxai[viz]",
 ]
 
 [tool.setuptools.packages.find]
 include = ["visxai*"]
+
+# The hover widget's ESM/CSS frontend must ship with the package. Without
+# this, a built wheel contains only the .py files and
+# `import visxai.visualizers.hover_widget` raises FileNotFoundError at
+# IMPORT time -- not at widget construction -- because anywidget validates
+# the _esm/_css paths when the class is defined. Verified by building a
+# wheel and importing from it; an editable install hides the problem
+# entirely, since it reads straight from the source tree.
+[tool.setuptools.package-data]
+"visxai.visualizers" = ["static/*.js", "static/*.css"]
+
+[tool.pytest.ini_options]
+markers = [
+    "network: requires internet access (downloads a real pretrained checkpoint)",
+]
+filterwarnings = [
+    # ipywidgets 7.x constructs an ipykernel.comm.Comm internally on every
+    # widget it creates, which newer ipykernel deprecated. Raised entirely
+    # inside ipywidgets (widget.py), not by any visxai code, and emitted
+    # once per widget -- ~730 lines of noise across the test suite.
+    # Narrowly targeted so any *other* DeprecationWarning still surfaces.
+    "ignore:The `ipykernel.comm.Comm` class has been deprecated:DeprecationWarning",
+    # ExplanationDashboard warns once per construction when hover_link is
+    # requested but anywidget isn't installed. That's the intended signal
+    # for a user, but in a suite without the [viz] extra it fires on nearly
+    # every dashboard test (~74 times) and drowns everything else. Safe to
+    # filter: pytest.warns() still catches filtered warnings, so
+    # TestHoverLink's dedicated assertions on it keep working.
+    "ignore:hover_link=True but anywidget is not installed:RuntimeWarning",
+]

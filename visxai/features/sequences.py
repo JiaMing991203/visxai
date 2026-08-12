@@ -8,12 +8,12 @@ artefacts consumed by :mod:`visxai.explainers.attention` (and any other
 sequence explainer) to translate token-level attributions back to RDKit atom
 and bond indices.
 
-Design (see ``OPEN_QUESTIONS.md`` for history — most of the original open
+Design (most of the original open
 questions are resolved by this design, not just answered ad hoc)
 --------------------------------------------------------------------------
 VisXAI wraps an already-trained model; it must not assume the tokenizer that
 model was trained with matches any particular scheme (see the architecture
-principle in ``CLAUDE.md``). The tokenizer is therefore a **pluggable
+principle in the README). The tokenizer is therefore a **pluggable
 parameter**: :func:`generate_sequence_representation` accepts any callable
 satisfying the :class:`SMILESTokenizer` protocol, defaulting to
 :func:`default_smiles_tokenizer` — VisXAI's own reference implementation,
@@ -384,7 +384,7 @@ class SMILESTokenizer(Protocol):
     A tokenizer must actually match the scheme the target model was
     trained on — VisXAI cannot verify this and does not assume one
     specific scheme is universally correct (see the architecture
-    principle in ``CLAUDE.md``). To wrap a real Hugging Face tokenizer,
+    principle in the README). To wrap a real Hugging Face tokenizer,
     implement this protocol using that tokenizer's own
     ``return_offsets_mapping=True`` output.
     """

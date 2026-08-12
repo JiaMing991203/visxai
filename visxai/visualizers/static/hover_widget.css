@@ -1,0 +1,192 @@
+/* Styling for MoleculeHoverWidget (see hover_widget.js).
+ *
+ * anywidget injects this scoped to the widget's own element, so these class
+ * names cannot leak into the surrounding notebook -- unlike a <style> block
+ * inside inline SVG, which applies document-wide (the reason RDKitSVGVisualizer
+ * has to suffix its gradient ids). Prefixed vx- anyway, for legibility in
+ * devtools.
+ *
+ * Colors come from the payload as inline styles; nothing here computes one.
+ */
+
+.vx-root {
+  position: relative;
+  font-family: system-ui, -apple-system, sans-serif;
+  display: inline-block;
+}
+
+.vx-svg svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+/* --- SMILES strip ------------------------------------------------------- */
+
+.vx-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  padding: 4px 2px 2px;
+  margin-top: 2px;
+  border-top: 1px solid rgba(128, 128, 128, 0.35);
+}
+
+.vx-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  cursor: default;
+  border-radius: 3px;
+}
+
+/* The bar gutter. Fixed height so the zero line sits at a constant
+   y across every column, which is what makes the bars comparable. */
+.vx-gutter {
+  position: relative;
+  width: 100%;
+  min-width: 9px;
+  height: 34px;
+}
+
+/* The zero line itself, drawn once per column so it reads as continuous. */
+.vx-gutter::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  border-top: 1px solid rgba(128, 128, 128, 0.4);
+}
+
+.vx-bar {
+  position: absolute;
+  left: 15%;
+  right: 15%;
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  box-sizing: border-box;
+}
+
+.vx-char {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 0 1px;
+  border-bottom: 2px solid transparent;
+  white-space: pre;
+}
+
+/* Structural characters -- parens, ring digits -- own no attribution.
+   Dimmed so a missing bar reads as "not applicable", not "score of zero". */
+.vx-inert {
+  opacity: 0.4;
+}
+
+/* --- hover highlight ----------------------------------------------------
+ *
+ * A tint plus bold was too easy to lose in a long SMILES: one slightly
+ * shaded column among forty doesn't read. Four cues now stack, the first
+ * being the strongest:
+ *
+ *   1. FOCUS DIMMING -- every other column fades, so the live one is the
+ *      only thing at full contrast. Brightening one item competes with its
+ *      neighbours; dimming the neighbours doesn't.
+ *   2. The score bar gets a hard outline and lifts to full saturation.
+ *   3. A dashed guide runs down the column, tying bar to character.
+ *   4. The character goes bold with a thicker colored underline.
+ *
+ * Transitions are short (80ms) -- long enough to read as motion, short
+ * enough that sweeping the pointer doesn't feel laggy.
+ */
+
+.vx-col {
+  transition: opacity 80ms ease-out, background-color 80ms ease-out;
+}
+
+/* Applied to the strip only while something is hovered, so the resting
+   state is completely unstyled. */
+.vx-strip.vx-focus .vx-col:not(.vx-on) {
+  opacity: 0.28;
+}
+
+.vx-col.vx-on {
+  background: rgba(17, 17, 17, 0.14);
+}
+
+.vx-col.vx-on .vx-bar {
+  outline: 2px solid #111;
+  filter: saturate(1.15);
+}
+
+/* Vertical guide linking the bar to its character. ::after is already the
+   zero line, so this uses ::before. */
+.vx-col.vx-on .vx-gutter::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  border-left: 1px dashed rgba(17, 17, 17, 0.55);
+}
+
+.vx-col.vx-on .vx-char {
+  font-weight: 700;
+  border-bottom-width: 3px;
+}
+
+/* --- cursor-following readout ------------------------------------------ */
+
+/* position:FIXED, not absolute, and deliberately so.
+ *
+ * Absolute positioning confines the readout to this widget's own element.
+ * With two panels side by side in a flex row, the right-hand panel is a
+ * later sibling and paints over the left panel's overflow -- so the left
+ * panel's readout was getting buried under the right panel's structure.
+ * A z-index alone doesn't fix that reliably, because each panel's widget
+ * subtree can form its own stacking context.
+ *
+ * Fixed positioning takes the readout out of flow entirely and positions
+ * it against the viewport, so no sibling can cover it. The JS therefore
+ * feeds it raw clientX/clientY (viewport coordinates) and flips it to the
+ * other side of the cursor near a screen edge.
+ *
+ * Caveat: an ancestor with transform/filter/will-change would become the
+ * containing block and re-confine it. ipywidgets containers don't set
+ * those, but that's the thing to check first if it ever regresses.
+ */
+.vx-readout {
+  position: fixed;
+  z-index: 2147483000;
+  pointer-events: none;
+  background: rgba(17, 17, 17, 0.92);
+  color: #fff;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  padding: 3px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+@media (prefers-color-scheme: dark) {
+  .vx-col.vx-on {
+    background: rgba(255, 255, 255, 0.18);
+  }
+  .vx-col.vx-on .vx-bar {
+    outline-color: #fff;
+  }
+  .vx-col.vx-on .vx-gutter::before {
+    border-left-color: rgba(255, 255, 255, 0.6);
+  }
+  .vx-readout {
+    background: rgba(240, 240, 240, 0.95);
+    color: #111;
+  }
+}
+
+/* Respect a reduced-motion preference: the cues are all still present,
+   they just appear instantly instead of easing in. */
+@media (prefers-reduced-motion: reduce) {
+  .vx-col {
+    transition: none;
+  }
+}

@@ -18,7 +18,11 @@ import shap
 
 from visxai.core.base_explainer import BaseExplainer
 from visxai.core.base_model import BaseModelWrapper
-from visxai.core.data_types import Explanation, MoleculeRepresentation
+from visxai.core.data_types import (
+    Explanation,
+    MoleculeRepresentation,
+    ScoreContribution,
+)
 from visxai.models.sklearn_wrapper import SklearnModelWrapper
 from visxai.utils.mapping import distribute_bit_score
 
@@ -31,6 +35,48 @@ def _unique_index_count(tuples_list: Optional[list[tuple[int, ...]]]) -> int:
     for t in tuples_list:
         unique.update(t)
     return len(unique)
+
+
+def _record_contributions(
+    provenance: dict[int, list[ScoreContribution]],
+    per_element: dict[int, float],
+    bit_idx: int,
+    bit_score: float,
+    shared_among: int,
+) -> None:
+    """Append one bit's itemised contributions to a provenance accumulator.
+
+    Called immediately alongside each ``distribute_bit_score`` result so the
+    breakdown is captured before the scores are summed away.
+
+    Parameters
+    ----------
+    provenance : dict[int, list[ScoreContribution]]
+        Accumulator, mutated in place; keyed by atom or bond index.
+    per_element : dict[int, float]
+        The ``distribute_bit_score`` output being recorded.
+    bit_idx : int
+        Fingerprint bit index that produced these contributions.
+    bit_score : float
+        The bit's own SHAP value, before any sharing.
+    shared_among : int
+        Divisor applied to ``bit_score``.  Chosen so that
+        ``contribution == bit_score / shared_among`` holds in **both**
+        ``bond_score_mode`` settings: in ``"duplicate"`` mode this is the
+        per-side unique-element count, while in ``"split"`` mode the
+        pre-scaling applied to ``bit_score`` cancels, leaving the combined
+        atom-plus-bond count.
+    """
+    for element_idx, contribution in per_element.items():
+        provenance.setdefault(element_idx, []).append(
+            ScoreContribution(
+                source_kind="bit",
+                source_index=int(bit_idx),
+                source_score=bit_score,
+                shared_among=shared_among,
+                contribution=contribution,
+            )
+        )
 
 
 class TreeSHAPExplainer(BaseExplainer):
@@ -152,7 +198,23 @@ class TreeSHAPExplainer(BaseExplainer):
               receive a score of ``0.0``.  Empty dict when
               ``mol_rep.bit_bond_info`` is ``None``.
             - ``metadata`` — contains ``"base_value"`` (the SHAP expected
-              value) and ``"predicted_value"`` (the model's raw prediction).
+              value), ``"predicted_value"`` (the model's raw prediction),
+              ``"bond_score_mode"`` (the setting this explainer was built
+              with) and ``"attribution"`` (the mode that actually took
+              effect: ``"tree/duplicate"``, ``"tree/split"``, or
+              ``"tree/atom-only"`` when no bond-level bit info was
+              available, since both modes degrade identically there).
+            - ``atom_provenance`` / ``bond_provenance`` — per-element
+              itemisation of which bits contributed and how far each bit's
+              score was divided, as
+              :class:`~visxai.core.data_types.ScoreContribution` entries.
+              Two properties hold by construction and are regression-tested:
+              each element's contributions sum exactly to its score, and
+              ``contribution == source_score / shared_among`` for every entry
+              in **both** ``bond_score_mode`` settings.  The modes are
+              distinguishable through ``shared_among`` alone — ``"split"``
+              divides by the combined atom-plus-bond count, so its divisors
+              run higher than ``"duplicate"``'s per-side counts.
 
         Raises
         ------
@@ -215,6 +277,8 @@ class TreeSHAPExplainer(BaseExplainer):
         n_atoms: int = mol_rep.mol.GetNumAtoms()
         atom_scores: dict[int, float] = defaultdict(float)
         bond_scores: dict[int, float] = defaultdict(float)
+        atom_provenance: dict[int, list[ScoreContribution]] = {}
+        bond_provenance: dict[int, list[ScoreContribution]] = {}
         has_bond_info: bool = mol_rep.bit_bond_info is not None
 
         active_bits = np.flatnonzero(fp)
@@ -240,12 +304,20 @@ class TreeSHAPExplainer(BaseExplainer):
                     )
                     for atom_idx, contribution in per_atom.items():
                         atom_scores[atom_idx] += contribution
+                    # The pre-scale above cancels against distribute_bit_score's
+                    # own division, so each element's true divisor is n_total.
+                    _record_contributions(
+                        atom_provenance, per_atom, bit_idx, bit_score, n_total
+                    )
                 if n_bonds_unique:
                     per_bond = distribute_bit_score(
                         bit_bonds_list, bit_score * n_bonds_unique / n_total
                     )
                     for bond_idx, contribution in per_bond.items():
                         bond_scores[bond_idx] += contribution
+                    _record_contributions(
+                        bond_provenance, per_bond, bit_idx, bit_score, n_total
+                    )
             else:
                 # "duplicate" mode, or "split" mode with no bond info
                 # available: the bit's full score goes to its atoms, and
@@ -255,6 +327,13 @@ class TreeSHAPExplainer(BaseExplainer):
                     per_atom = distribute_bit_score(bit_atoms_list, bit_score)
                     for atom_idx, contribution in per_atom.items():
                         atom_scores[atom_idx] += contribution
+                    _record_contributions(
+                        atom_provenance,
+                        per_atom,
+                        bit_idx,
+                        bit_score,
+                        len(per_atom),
+                    )
                 elif not bit_bonds_list:
                     # Active bit with no atom or bond mapping (e.g., a MACCS
                     # '?' key). The score cannot be attributed — skip.
@@ -264,6 +343,13 @@ class TreeSHAPExplainer(BaseExplainer):
                     per_bond = distribute_bit_score(bit_bonds_list, bit_score)
                     for bond_idx, contribution in per_bond.items():
                         bond_scores[bond_idx] += contribution
+                    _record_contributions(
+                        bond_provenance,
+                        per_bond,
+                        bit_idx,
+                        bit_score,
+                        len(per_bond),
+                    )
 
         # Ensure every atom in the molecule has an entry (default 0.0).
         for i in range(n_atoms):
@@ -281,11 +367,22 @@ class TreeSHAPExplainer(BaseExplainer):
         else:
             bond_scores_out = {}
 
+        # Report the mode that actually took effect, not merely the one
+        # requested: without bond-level bit info both modes degrade to the same
+        # atom-only behaviour, and claiming "split" there would be misleading.
+        attribution: str = (
+            f"tree/{self._bond_score_mode}" if has_bond_info else "tree/atom-only"
+        )
+
         return Explanation(
             atom_scores=dict(atom_scores),
             bond_scores=bond_scores_out,
             metadata={
                 "base_value": base_value,
                 "predicted_value": float(model.predict(mol_rep)[0]),
+                "bond_score_mode": self._bond_score_mode,
+                "attribution": attribution,
             },
+            atom_provenance=atom_provenance,
+            bond_provenance=bond_provenance,
         )

@@ -11,7 +11,6 @@ where available.
 
 from __future__ import annotations
 
-from collections import defaultdict
 from typing import Literal
 
 import numpy as np
@@ -21,6 +20,11 @@ from visxai.core.base_explainer import BaseExplainer
 from visxai.core.base_model import BaseModelWrapper
 from visxai.core.data_types import Explanation, MoleculeRepresentation
 from visxai.models.pytorch_wrapper import PyTorchSequenceWrapper
+from visxai.utils.mapping import (
+    aggregate_token_scores_to_atoms,
+    aggregate_token_scores_to_bonds,
+    build_token_provenance,
+)
 
 
 def _last_layer_query_attention(
@@ -81,52 +85,6 @@ def _attention_rollout(attentions: tuple[torch.Tensor, ...]) -> np.ndarray:
 
     token_scores = rollout[0, :]
     return token_scores.detach().cpu().numpy()
-
-
-def _aggregate_token_scores_to_atoms(
-    token_scores: np.ndarray,
-    token_to_atom_map: dict[int, list[int]],
-    n_atoms: int,
-) -> dict[int, float]:
-    """Sum per-token attention scores onto the atoms each token maps to."""
-    atom_scores: dict[int, float] = defaultdict(float)
-    for token_pos, atoms in token_to_atom_map.items():
-        if not atoms:
-            continue
-        score = float(token_scores[token_pos])
-        for atom_idx in atoms:
-            atom_scores[atom_idx] += score
-
-    for i in range(n_atoms):
-        if i not in atom_scores:
-            atom_scores[i] = 0.0
-    return dict(atom_scores)
-
-
-def _aggregate_token_scores_to_bonds(
-    token_scores: np.ndarray,
-    token_to_bond_map: dict[int, list[int]],
-) -> dict[int, float]:
-    """Sum per-token attention scores onto the bonds each token maps to.
-
-    Unlike :func:`_aggregate_token_scores_to_atoms`, bonds with no
-    contributing token are **omitted** rather than filled with ``0.0``.
-    Most bonds have no explicit character in the SMILES string at all (see
-    :func:`visxai.features.sequences.compute_bond_char_spans`), so "no
-    entry" means "no information available" — distinct from a token-backed
-    measurement that happened to come out at zero. This keeps
-    :class:`~visxai.visualizers.rdkit_2d.RDKitSVGVisualizer` from painting
-    the (large) majority of unmeasured bonds as if they were confirmed to
-    have zero contribution.
-    """
-    bond_scores: dict[int, float] = defaultdict(float)
-    for token_pos, bonds in token_to_bond_map.items():
-        if not bonds:
-            continue
-        score = float(token_scores[token_pos])
-        for bond_idx in bonds:
-            bond_scores[bond_idx] += score
-    return dict(bond_scores)
 
 
 class AttentionExplainer(BaseExplainer):
@@ -271,11 +229,11 @@ class AttentionExplainer(BaseExplainer):
         else:
             token_scores = _attention_rollout(attentions)
 
-        atom_scores = _aggregate_token_scores_to_atoms(
+        atom_scores = aggregate_token_scores_to_atoms(
             token_scores, mol_rep.token_to_atom_map, mol_rep.mol.GetNumAtoms()
         )
         bond_scores = (
-            _aggregate_token_scores_to_bonds(token_scores, mol_rep.token_to_bond_map)
+            aggregate_token_scores_to_bonds(token_scores, mol_rep.token_to_bond_map)
             if mol_rep.token_to_bond_map is not None
             else {}
         )
@@ -286,5 +244,14 @@ class AttentionExplainer(BaseExplainer):
             metadata={
                 "strategy": self._strategy,
                 "predicted_value": float(model.predict(mol_rep)[0]),
+                "attribution": "sequence/duplicate",
             },
+            atom_provenance=build_token_provenance(
+                token_scores, mol_rep.token_to_atom_map
+            ),
+            bond_provenance=(
+                build_token_provenance(token_scores, mol_rep.token_to_bond_map)
+                if mol_rep.token_to_bond_map is not None
+                else {}
+            ),
         )

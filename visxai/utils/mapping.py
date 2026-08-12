@@ -9,6 +9,12 @@ RDKit atom indices regardless of the underlying model type.
 
 from __future__ import annotations
 
+from collections import defaultdict
+
+import numpy as np
+
+from visxai.core.data_types import ScoreContribution
+
 
 def distribute_bit_score(
     bit_atoms_list: list[tuple[int, ...]],
@@ -166,3 +172,174 @@ def align_tokens_to_atoms(
                     overlapping_targets.append(target_idx)
         token_to_target_map[token_pos] = sorted(overlapping_targets)
     return token_to_target_map
+
+
+def aggregate_token_scores_to_atoms(
+    token_scores: np.ndarray,
+    token_to_atom_map: dict[int, list[int]],
+    n_atoms: int,
+) -> dict[int, float]:
+    """Sum per-token XAI scores onto the atoms each token maps to.
+
+    Promoted from :mod:`visxai.explainers.attention` (originally private,
+    ``_aggregate_token_scores_to_atoms``) once a second sequence-path
+    explainer module (:mod:`visxai.explainers.gradient_based_sequence`)
+    needed the identical aggregation logic — the logic itself is agnostic
+    to *how* a per-token score was produced (raw attention weight, summed
+    Integrated Gradients attribution, or Grad-CAM channel-weighted
+    activation), so it belongs here alongside :func:`align_tokens_to_atoms`
+    rather than duplicated or imported cross-explainer-module.
+
+    Dense: every atom index in ``range(n_atoms)`` is present in the
+    result, defaulting to ``0.0`` if no token maps to it — mirrors
+    :func:`distribute_bit_score`'s "every measurable index gets an entry"
+    convention.
+
+    Parameters
+    ----------
+    token_scores : numpy.ndarray
+        1-D array of shape ``(seq_len,)`` with one score per token
+        position.
+    token_to_atom_map : dict[int, list[int]]
+        Token position to atom-index list, as produced by
+        :func:`align_tokens_to_atoms` (dense — every atom index appears in
+        some token's mapped list).
+    n_atoms : int
+        Total number of atoms in the molecule, so every atom index gets an
+        entry even when uncovered by any token.
+
+    Returns
+    -------
+    dict[int, float]
+        Every atom index in ``range(n_atoms)`` mapped to its cumulative
+        token-score contribution (``0.0`` if uncovered).
+    """
+    atom_scores: dict[int, float] = defaultdict(float)
+    for token_pos, atoms in token_to_atom_map.items():
+        if not atoms:
+            continue
+        score = float(token_scores[token_pos])
+        for atom_idx in atoms:
+            atom_scores[atom_idx] += score
+
+    for i in range(n_atoms):
+        if i not in atom_scores:
+            atom_scores[i] = 0.0
+    return dict(atom_scores)
+
+
+def aggregate_token_scores_to_bonds(
+    token_scores: np.ndarray,
+    token_to_bond_map: dict[int, list[int]],
+) -> dict[int, float]:
+    """Sum per-token XAI scores onto the bonds each token maps to.
+
+    Promoted from :mod:`visxai.explainers.attention` (originally private,
+    ``_aggregate_token_scores_to_bonds``) — see
+    :func:`aggregate_token_scores_to_atoms`'s docstring for why.
+
+    Unlike :func:`aggregate_token_scores_to_atoms`, bonds with no
+    contributing token are **omitted** rather than filled with ``0.0``.
+    Most bonds have no explicit character in the SMILES string at all (see
+    :func:`visxai.features.sequences.compute_bond_char_spans`), so "no
+    entry" means "no information available" — distinct from a token-backed
+    measurement that happened to come out at zero. This keeps
+    :class:`~visxai.visualizers.rdkit_2d.RDKitSVGVisualizer` from painting
+    the (large) majority of unmeasured bonds as if they were confirmed to
+    have zero contribution.
+
+    Parameters
+    ----------
+    token_scores : numpy.ndarray
+        1-D array of shape ``(seq_len,)`` with one score per token
+        position.
+    token_to_bond_map : dict[int, list[int]]
+        Token position to bond-index list, as produced by
+        :func:`align_tokens_to_atoms` (sparse — only bond indices with an
+        explicit SMILES character appear as keys anywhere in this
+        structure at all).
+
+    Returns
+    -------
+    dict[int, float]
+        Bond index mapped to its cumulative token-score contribution, for
+        only the bonds actually covered by some token.
+    """
+    bond_scores: dict[int, float] = defaultdict(float)
+    for token_pos, bonds in token_to_bond_map.items():
+        if not bonds:
+            continue
+        score = float(token_scores[token_pos])
+        for bond_idx in bonds:
+            bond_scores[bond_idx] += score
+    return dict(bond_scores)
+
+
+def build_token_provenance(
+    token_scores: np.ndarray,
+    token_to_target_map: dict[int, list[int]],
+) -> dict[int, list[ScoreContribution]]:
+    """Itemise which tokens contributed to each atom or bond, and how.
+
+    The companion to :func:`aggregate_token_scores_to_atoms` /
+    :func:`aggregate_token_scores_to_bonds`, which sum their contributions
+    away. Kept as a separate function rather than an extra return value so
+    those two keep their established signatures and stay usable unchanged by
+    callers that do not want provenance.
+
+    Like :func:`align_tokens_to_atoms` and :func:`distribute_bit_score`, this
+    is deliberately index-type-agnostic: pass ``token_to_atom_map`` or
+    ``token_to_bond_map`` and the logic is identical, because the sequence
+    path treats atoms and bonds the same way.
+
+    **Every contribution has ``shared_among=1``**, which is the point of
+    recording it. The sequence path *duplicates*: a token overlapping three
+    atoms gives its full score to each, undivided, so the total attributed
+    mass exceeds the token scores' own sum. This is the opposite of the
+    fingerprint path, where :func:`distribute_bit_score` always divides — and
+    the two behaviours are otherwise indistinguishable from the final scores
+    alone.
+
+    Parameters
+    ----------
+    token_scores : numpy.ndarray
+        1-D array of shape ``(seq_len,)`` with one score per token position.
+    token_to_target_map : dict[int, list[int]]
+        Token position to target-index list, as produced by
+        :func:`align_tokens_to_atoms`. Tokens mapping to an empty list (special
+        tokens such as ``[CLS]``/``[SEP]``, or implicit bonds) contribute
+        nothing and appear nowhere in the result.
+
+    Returns
+    -------
+    dict[int, list[ScoreContribution]]
+        Target index mapped to the list of contributions it received. Only
+        targets actually covered by some token appear as keys, matching
+        :func:`aggregate_token_scores_to_bonds`'s "no entry means no
+        information available" convention rather than zero-filling.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> prov = build_token_provenance(np.array([0.5, 0.2]), {0: [0, 1], 1: [1]})
+    >>> [c["contribution"] for c in prov[1]]  # atom 1 got both tokens in full
+    [0.5, 0.2]
+    >>> prov[0][0]["shared_among"]  # never divided
+    1
+    """
+    provenance: dict[int, list[ScoreContribution]] = {}
+    for token_pos, targets in token_to_target_map.items():
+        if not targets:
+            continue
+        score = float(token_scores[token_pos])
+        for target_idx in targets:
+            provenance.setdefault(target_idx, []).append(
+                ScoreContribution(
+                    source_kind="token",
+                    source_index=int(token_pos),
+                    source_score=score,
+                    shared_among=1,
+                    contribution=score,
+                )
+            )
+    return provenance

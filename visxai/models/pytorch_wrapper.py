@@ -34,7 +34,7 @@ class PyTorchSequenceWrapper(BaseModelWrapper):
     architecture or training-time feature scheme — it describes only how
     the model is *called*, not what its inputs mean, consistent with
     VisXAI's principle of not assuming a specific feature scheme (see
-    ``CLAUDE.md``).
+    the README).
 
     Parameters
     ----------
@@ -115,7 +115,7 @@ class PyTorchGNNWrapper(BaseModelWrapper):
     assuming ``forward(input_ids, attention_mask)`` or
     :class:`~visxai.models.sklearn_wrapper.SklearnModelWrapper` assuming
     ``.predict(X)``. The risk in this package is always in feature
-    *content* (see the architecture principle in ``CLAUDE.md``), never in
+    *content* (see the architecture principle in the README), never in
     a framework's own established calling convention.
 
     Models that also consume bond features (``edge_attr``) do **not** all

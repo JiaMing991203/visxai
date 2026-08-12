@@ -7,12 +7,16 @@ VisXAI pipeline:
   molecule (SMILES, RDKit Mol, fingerprint array, and bit-to-atom metadata).
 - :class:`Explanation` — stores the XAI output as per-atom and per-bond
   scores, plus free-form metadata.
+
+A third, smaller type — :class:`ScoreContribution` — itemises *how* an
+individual score was assembled, so a visualizer can explain a number rather
+than only display it.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Literal, Optional, TypedDict
 
 import numpy as np
 from rdkit.Chem import Mol
@@ -120,6 +124,69 @@ class MoleculeRepresentation:
     bit_bond_info: Optional[dict[int, list[tuple[int, ...]]]] = field(default=None)
 
 
+class ScoreContribution(TypedDict):
+    """One source's itemised contribution to a single atom's or bond's score.
+
+    An atom/bond score in :class:`Explanation` is a *sum of shares* drawn from
+    several sources — fingerprint bits in the tree path, token positions in the
+    sequence path.  The accumulation loop that produces the sum discards how it
+    was reached, so a score of ``-0.42`` is indistinguishable from one bit
+    landing alone, one bit worth ``-2.52`` divided six ways, or four weak bits
+    summing.  This TypedDict records the itemisation before it collapses.
+
+    A ``TypedDict`` rather than a dataclass on purpose: it is strictly typed
+    *and* JSON-native at runtime, so it crosses into the
+    :class:`~visxai.visualizers.hover_widget.MoleculeHoverWidget` payload with
+    no conversion layer.
+
+    Parameters
+    ----------
+    source_kind : {"bit", "token"}
+        What kind of source produced this contribution.  ``"bit"`` for a
+        fingerprint bit (tree path), ``"token"`` for a token position
+        (sequence path).
+    source_index : int
+        Index of the source — the fingerprint bit index, or the token
+        position within the tokenised sequence.
+    source_score : float
+        The source's *own* score before any sharing: the bit's raw SHAP
+        value, or the token's raw attribution.
+    shared_among : int
+        How many elements ``source_score`` was divided across to produce
+        ``contribution``.  **This is the field that distinguishes splitting
+        from duplication**: ``1`` means the source handed over its full score
+        undivided (duplication), while ``> 1`` means the score was split that
+        many ways.  Recording the divisor rather than a mode name keeps the
+        distinction meaningful across all three of VisXAI's sharing
+        behaviours, which do not share a common vocabulary — see
+        :func:`~visxai.utils.mapping.distribute_bit_score` (always splits) and
+        :func:`~visxai.utils.mapping.aggregate_token_scores_to_atoms` (always
+        duplicates).
+    contribution : float
+        What actually landed on this element.  Equal to
+        ``source_score / shared_among`` for the tree path; equal to
+        ``source_score`` when ``shared_among`` is ``1``.
+
+    Examples
+    --------
+    >>> c: ScoreContribution = {
+    ...     "source_kind": "bit",
+    ...     "source_index": 314,
+    ...     "source_score": -2.52,
+    ...     "shared_among": 6,
+    ...     "contribution": -0.42,
+    ... }
+    >>> c["shared_among"] > 1  # split, not duplicated
+    True
+    """
+
+    source_kind: Literal["bit", "token"]
+    source_index: int
+    source_score: float
+    shared_among: int
+    contribution: float
+
+
 @dataclass
 class Explanation:
     """XAI output for a single molecule.
@@ -141,7 +208,20 @@ class Explanation:
     metadata : dict, optional
         Free-form dictionary for auxiliary information such as the model's
         predicted value, class probabilities, or confidence scores.
-        Defaults to an empty dict.
+        Defaults to an empty dict.  Explainers that share a score across
+        several elements also record an ``"attribution"`` descriptor here
+        (e.g. ``"tree/duplicate"``, ``"sequence/duplicate"``,
+        ``"graph/direct"``) naming the convention that produced the scores.
+    atom_provenance : dict[int, list[ScoreContribution]], optional
+        Per-atom itemisation of where each score came from.  Defaults to an
+        empty dict, which means "not recorded" rather than "no contributions"
+        — the same "no entry = no information available" convention
+        ``bond_scores`` already uses for unmeasurable bonds.  Explainers whose
+        mapping is 1:1 (the graph path, where node *i* is atom *i*) leave this
+        empty on purpose: a single-entry list per atom carries no information
+        the score itself does not already give.
+    bond_provenance : dict[int, list[ScoreContribution]], optional
+        Per-bond equivalent of ``atom_provenance``.  Defaults to an empty dict.
 
     Examples
     --------
@@ -157,3 +237,5 @@ class Explanation:
     atom_scores: dict[int, float]
     bond_scores: dict[int, float] = field(default_factory=dict)
     metadata: dict = field(default_factory=dict)
+    atom_provenance: dict[int, list[ScoreContribution]] = field(default_factory=dict)
+    bond_provenance: dict[int, list[ScoreContribution]] = field(default_factory=dict)
